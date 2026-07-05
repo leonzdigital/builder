@@ -32,8 +32,6 @@ LP_ROOT = AUTOLANDING_DIR.parent
 _LOCAL_BRAND_LINKS = AUTOLANDING_DIR / 'brand-links.json'
 BRAND_LINKS_EXAMPLE = AUTOLANDING_DIR / 'brand-links.example.json'
 BRAND_LINKS_PATH = _LOCAL_BRAND_LINKS if _LOCAL_BRAND_LINKS.is_file() else LP_ROOT / 'brand-links.json'
-BRAND_LINKS_WRITE_PATH = _LOCAL_BRAND_LINKS
-
 from lp_compliance import (
     amp_robots_content,
     audit_ai_phrases,
@@ -68,6 +66,9 @@ from lp_compliance import (
     trim_desc as _compliance_trim_desc,
     trim_title as _compliance_trim_title,
 )
+
+from lp_content_enricher import enrichment_to_pools, get_serp_enrichment, serp_configured
+
 AMP_TEMPLATE_DIR = AUTOLANDING_DIR / 'templates' / 'amp'
 AMP_TEMPLATE_PATH = AMP_TEMPLATE_DIR / 'index.html'
 AMP_TEMPLATE_DEFAULT = 'index.html'
@@ -405,6 +406,7 @@ _INTENT_FAQ_TEMPLATES: Dict[str, Tuple[str, str]] = {
 
 _banks_cache: Optional[Dict[str, Any]] = None
 _banks_source = 'embedded'
+_serp_pool_cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
 
 
 def _embedded_banks() -> Dict[str, Any]:
@@ -906,7 +908,35 @@ def get_global_config() -> Dict[str, str]:
         'gsc_token': (g.get('gsc_token') or '').strip(),
         'cf_token': (g.get('cf_token') or '').strip(),
         'favicon': (g.get('favicon') or '').strip(),
+        'serpapi_key': (g.get('serpapi_key') or '').strip(),
+        'google_cse_key': (g.get('google_cse_key') or '').strip(),
+        'google_cse_cx': (g.get('google_cse_cx') or '').strip(),
+        'serp_enrich_enabled': str(g.get('serp_enrich_enabled', True)).lower() not in ('0', 'false', 'no', ''),
     }
+
+
+def clear_serp_pool_cache() -> None:
+    global _serp_pool_cache
+    _serp_pool_cache = {}
+
+
+def _get_serp_pools(keyword: str, cat: str) -> Dict[str, List[Dict[str, Any]]]:
+    global _serp_pool_cache
+    g = get_global_config()
+    if not g.get('serp_enrich_enabled', True) or not serp_configured(g):
+        return {'faq': [], 'titles': [], 'descriptions': []}
+    cache_key = f'{cat}|{keyword.strip().lower()}'
+    if cache_key in _serp_pool_cache:
+        return _serp_pool_cache[cache_key]
+    enrich = get_serp_enrichment(
+        keyword,
+        serpapi_key=g.get('serpapi_key', ''),
+        google_cse_key=g.get('google_cse_key', ''),
+        google_cse_cx=g.get('google_cse_cx', ''),
+    )
+    pools = enrichment_to_pools(enrich, cat)
+    _serp_pool_cache[cache_key] = pools
+    return pools
 
 
 def find_brand_entry(brand: str) -> Optional[Dict[str, str]]:
@@ -939,6 +969,13 @@ def merge_brand_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
         out.setdefault('gsc_token', global_cfg['gsc_token'])
     if global_cfg.get('cf_token'):
         out.setdefault('cf_token', global_cfg['cf_token'])
+    if global_cfg.get('serpapi_key'):
+        out.setdefault('serpapi_key', global_cfg['serpapi_key'])
+    if global_cfg.get('google_cse_key'):
+        out.setdefault('google_cse_key', global_cfg['google_cse_key'])
+    if global_cfg.get('google_cse_cx'):
+        out.setdefault('google_cse_cx', global_cfg['google_cse_cx'])
+    out.setdefault('serp_enrich_enabled', global_cfg.get('serp_enrich_enabled', True))
     out.setdefault('slug', _slugify(brand))
     out.setdefault('output_folder', default_output_folder(out['slug']))
     return out
@@ -1194,6 +1231,9 @@ def _build_faq_pool(cat: str, keyword: str) -> List[Dict[str, Any]]:
             'a': tpl[1],
             '_intent': intent_name,
         })
+    serp = _get_serp_pools(keyword, cat)
+    if serp.get('faq'):
+        pool.extend(serp['faq'])
     return _sort_pool_by_keywords(pool, parsed, ('q', 'a'), cat)
 
 
@@ -1328,7 +1368,12 @@ def _build_title_pool(cat: str, keyword: str) -> List[Dict[str, Any]]:
     titles = get_banks()['titles']
     base = _pool_with_ids(titles.get(cat, titles['slot']), 'title', cat)
     parsed = parse_keyword_focus(keyword)
-    return _sort_pool_by_keywords(base, parsed, cat=cat)
+    pool = _sort_pool_by_keywords(base, parsed, cat=cat)
+    serp = _get_serp_pools(keyword, cat)
+    if serp.get('titles'):
+        pool = list(pool) + serp['titles']
+        pool = _sort_pool_by_keywords(pool, parsed, cat=cat)
+    return pool
 
 
 def _build_desc_pool(cat: str, keyword: str) -> List[Dict[str, Any]]:
@@ -1340,7 +1385,12 @@ def _build_desc_pool(cat: str, keyword: str) -> List[Dict[str, Any]]:
         if '{kw_secondary}' in pattern and not parsed['secondary']:
             continue
         dynamic.append({'id': f'desc-dyn-{cat}-{i}', 'text': pattern})
-    return _sort_pool_by_keywords(base + dynamic, parsed, cat=cat)
+    pool = _sort_pool_by_keywords(base + dynamic, parsed, cat=cat)
+    serp = _get_serp_pools(keyword, cat)
+    if serp.get('descriptions'):
+        pool = list(pool) + serp['descriptions']
+        pool = _sort_pool_by_keywords(pool, parsed, cat=cat)
+    return pool
 
 
 def gen_title(
@@ -4312,7 +4362,7 @@ class LPWidget(ctk.CTk):
     def _section_content_pack(self, p: Any, accent: str = BLUE) -> None:
         _sec_label(
             p, 0, 'Bank Konten',
-            subtitle='pack.json lokal atau fetch raw GitHub — lihat content/CONTENT.md',
+            subtitle='pack.json + enrich Google (SerpAPI / Custom Search) — lihat content/CONTENT.md',
             accent=accent,
         )
 
@@ -4323,7 +4373,7 @@ class LPWidget(ctk.CTk):
 
         _field_label(p, 2, 'Remote pack URL (raw GitHub, kosong = lokal)')
         self.e_content_remote = _entry(
-            p, 'https://raw.githubusercontent.com/USER/repo/main/pack.json',
+            p, 'https://raw.githubusercontent.com/leonzdigital/builder/main/content/pack.json',
         )
         _field_widget(p, 3, self.e_content_remote)
 
@@ -4335,12 +4385,55 @@ class LPWidget(ctk.CTk):
         self.e_content_ttl.grid(row=0, column=1, sticky='ew', padx=(8, 0))
 
         btn_row = ctk.CTkFrame(p, fg_color='transparent')
-        btn_row.grid(row=5, column=0, sticky='ew', padx=INSET, pady=(FIELD_GAP, INSET))
+        btn_row.grid(row=5, column=0, sticky='ew', padx=INSET, pady=(FIELD_GAP, 6))
         btn_row.grid_columnconfigure((0, 1), weight=1)
         _btn(btn_row, 'Simpan Manifest', self._save_content_manifest, variant='secondary', height=30).grid(
             row=0, column=0, padx=(0, 5), sticky='ew',
         )
         _btn(btn_row, 'Muat Ulang Bank Konten', self._refresh_content, variant='primary', height=30).grid(
+            row=0, column=1, padx=(5, 0), sticky='ew',
+        )
+
+        _sep(p, 6)
+        _sec_label(
+            p, 7, 'Enrich dari Google',
+            subtitle='PAA & related search → pool FAQ/title/desc acak saat build (tulis ulang, bukan copy SERP)',
+            accent=TEAL,
+        )
+
+        self.var_serp_enrich = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            p, text='Aktifkan enrich Google saat generate konten',
+            variable=self.var_serp_enrich, font=FT, text_color=TEXT,
+            fg_color=ACCENT, hover_color=ACCENT2, checkmark_color=INPUT,
+            border_color=BORDER, corner_radius=4,
+        ).grid(row=8, column=0, sticky='w', padx=INSET, pady=(FIELD_GAP, 4))
+
+        _field_label(p, 9, 'SerpAPI key (disarankan — People Also Ask)')
+        self.e_serpapi = _entry(p, 'Kosongkan jika pakai Google CSE saja')
+        _field_widget(p, 10, self.e_serpapi)
+
+        cse_row = ctk.CTkFrame(p, fg_color='transparent')
+        cse_row.grid(row=11, column=0, sticky='ew', padx=INSET)
+        cse_row.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(cse_row, text='Google CSE API key', font=FT, text_color=SUBTITLE).grid(
+            row=0, column=0, sticky='w',
+        )
+        ctk.CTkLabel(cse_row, text='Search Engine ID (cx)', font=FT, text_color=SUBTITLE).grid(
+            row=0, column=1, sticky='w', padx=(8, 0),
+        )
+        self.e_google_cse_key = _entry(cse_row, 'API key Custom Search')
+        self.e_google_cse_key.grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=(4, 0))
+        self.e_google_cse_cx = _entry(cse_row, 'cx dari programmablesearchengine.google.com')
+        self.e_google_cse_cx.grid(row=1, column=1, sticky='ew', padx=(5, 0), pady=(4, 0))
+
+        serp_btn = ctk.CTkFrame(p, fg_color='transparent')
+        serp_btn.grid(row=12, column=0, sticky='ew', padx=INSET, pady=(FIELD_GAP, INSET))
+        serp_btn.grid_columnconfigure((0, 1), weight=1)
+        _btn(serp_btn, 'Simpan API Google', self._save_serp_config, variant='secondary', height=30).grid(
+            row=0, column=0, padx=(0, 5), sticky='ew',
+        )
+        _btn(serp_btn, 'Preview Enrich Keyword', self._preview_serp_enrich, variant='teal', height=30).grid(
             row=0, column=1, padx=(5, 0), sticky='ew',
         )
 
@@ -4354,6 +4447,7 @@ class LPWidget(ctk.CTk):
         self.e_content_remote.insert(0, manifest.get('remote_url') or '')
         self.e_content_ttl.delete(0, 'end')
         self.e_content_ttl.insert(0, str(int(manifest.get('cache_ttl_hours') or 24)))
+        self._load_serp_form_defaults()
         self._update_content_status_label()
 
     def _update_content_status_label(self) -> None:
@@ -4391,6 +4485,79 @@ class LPWidget(ctk.CTk):
             self._update_content_status_label()
         except OSError as exc:
             self._log(f'Gagal simpan manifest: {exc}', 'err')
+
+    def _load_serp_form_defaults(self) -> None:
+        if not hasattr(self, 'e_serpapi'):
+            return
+        g = load_brand_links().get('global') or {}
+        self._fill_default(self.e_serpapi, g.get('serpapi_key', ''))
+        self._fill_default(self.e_google_cse_key, g.get('google_cse_key', ''))
+        self._fill_default(self.e_google_cse_cx, g.get('google_cse_cx', ''))
+        enabled = g.get('serp_enrich_enabled', True)
+        if hasattr(self, 'var_serp_enrich'):
+            self.var_serp_enrich.set(str(enabled).lower() not in ('0', 'false', 'no', ''))
+
+    def _save_serp_config(self) -> None:
+        serpapi = self.e_serpapi.get().strip() if hasattr(self, 'e_serpapi') else ''
+        cse_key = self.e_google_cse_key.get().strip() if hasattr(self, 'e_google_cse_key') else ''
+        cse_cx = self.e_google_cse_cx.get().strip() if hasattr(self, 'e_google_cse_cx') else ''
+        enabled = bool(self.var_serp_enrich.get()) if hasattr(self, 'var_serp_enrich') else True
+        if not serpapi and not (cse_key and cse_cx):
+            self._log('Isi SerpAPI key atau Google CSE key + cx sebelum simpan.', 'warn')
+            return
+        try:
+            data = load_brand_links()
+            if not isinstance(data.get('global'), dict):
+                data['global'] = {}
+            data['global']['serpapi_key'] = serpapi
+            data['global']['google_cse_key'] = cse_key
+            data['global']['google_cse_cx'] = cse_cx
+            data['global']['serp_enrich_enabled'] = enabled
+            if not isinstance(data.get('brands'), dict):
+                data['brands'] = {}
+            BRAND_LINKS_PATH.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + '\n',
+                encoding='utf-8',
+            )
+            clear_serp_pool_cache()
+            self._log('API Google/Serp disimpan ke brand-links.json (gitignored).', 'ok')
+        except OSError as exc:
+            self._log(f'Gagal simpan API enrich: {exc}', 'err')
+
+    def _preview_serp_enrich(self) -> None:
+        kw = self.e_kw.get().strip() if hasattr(self, 'e_kw') else ''
+        if not kw:
+            self._log('Isi keyword fokus dulu untuk preview enrich.', 'warn')
+            return
+        serpapi = self.e_serpapi.get().strip() if hasattr(self, 'e_serpapi') else ''
+        cse_key = self.e_google_cse_key.get().strip() if hasattr(self, 'e_google_cse_key') else ''
+        cse_cx = self.e_google_cse_cx.get().strip() if hasattr(self, 'e_google_cse_cx') else ''
+        if not serpapi and not (cse_key and cse_cx):
+            self._log('Isi SerpAPI key atau Google CSE key + cx.', 'warn')
+            return
+        self._log(f'Enrich Google untuk: {kw.split(",")[0].strip()}…', 'info')
+
+        def worker() -> None:
+            enrich = get_serp_enrichment(
+                kw,
+                serpapi_key=serpapi,
+                google_cse_key=cse_key,
+                google_cse_cx=cse_cx,
+                force=True,
+            )
+            clear_serp_pool_cache()
+            msg = (
+                f"Enrich OK ({enrich.get('source', '?')}): "
+                f"{len(enrich.get('faq') or [])} FAQ, "
+                f"{len(enrich.get('titles') or [])} title, "
+                f"{len(enrich.get('descriptions') or [])} desc, "
+                f"{len(enrich.get('synonyms') or [])} sinonim"
+            )
+            self.after(0, lambda: self._log(msg, 'ok'))
+            self.after(0, self._schedule_faq_refresh)
+            self.after(0, self._schedule_seo_refresh)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _section_seo(self, p: Any, accent: str = BLUE) -> None:
         _sec_label(
@@ -4686,6 +4853,7 @@ class LPWidget(ctk.CTk):
         def worker() -> None:
             global _banks_cache
             _banks_cache = None
+            clear_serp_pool_cache()
             load_content_banks(force=True)
             info = content_pack_summary()
             self.after(0, lambda i=info: self._log(

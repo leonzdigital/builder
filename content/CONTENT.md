@@ -70,3 +70,24 @@ Tool mengisi otomatis saat build:
 - FAQ build: minimal 8 item, 6 topik wajib brand (situs, login, link alternatif, rtp, website, daftar)
 - Hindari duplikat antar entri dalam kategori yang sama
 - Variasi natural — hindari frasa AI generik berulang
+
+## Enrich otomatis dari Google (runtime)
+
+Tab **Lanjutan → Bank Konten → Enrich dari Google**:
+
+| API | Fungsi |
+|---|---|
+| **SerpAPI** (disarankan) | People Also Ask + related searches |
+| **Google Custom Search** | Snippet hasil pencarian → FAQ/deskripsi |
+
+### Setup
+
+1. **SerpAPI**: daftar di [serpapi.com](https://serpapi.com/) → copy API key
+2. **Google CSE** (alternatif/gratis terbatas):
+   - [Programmable Search Engine](https://programmablesearchengine.google.com/)
+   - [Custom Search JSON API](https://developers.google.com/custom-search/v1/overview) → API key + cx
+3. Isi di GUI → **Simpan API Google** (tersimpan di `brand-links.json`, gitignored)
+4. **Preview Enrich Keyword** — uji dengan keyword form
+5. Saat build/regenerasi, pool FAQ/title/desc di-merge dengan entri SERP (acak + bobot keyword)
+
+Cache SERP: `content/cache/serp/` (7 hari, gitignored). Semua teks **ditulis ulang** dengan placeholder `{brand}`, `{deposit}` — bukan copy mentah SERP.

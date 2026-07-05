@@ -68,6 +68,10 @@ https://raw.githubusercontent.com/USERNAME/lp-builder-content/main/pack.json
 
 Atur di tab **Lanjutan → Bank Konten**, lalu **Muat Ulang Bank Konten**.
 
+### Enrich kosa kata dari Google
+
+Isi **SerpAPI key** (PAA + related search) atau **Google CSE key + cx** di tab Bank Konten. Konten FAQ/title/deskripsi diperkaya otomatis saat generate — dipilih acak sesuai keyword. API key disimpan lokal di `brand-links.json` (tidak di-push ke GitHub).
+
 Detail: [content/CONTENT.md](content/CONTENT.md)
 
 ## Deploy ke GitHub
