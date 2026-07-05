@@ -15,6 +15,7 @@ content/cache/
 landing/
 configs/
 templates/cache/
+secrets/serp-keys.json
 
 # OS / editor
 .DS_Store

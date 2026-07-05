@@ -22,14 +22,16 @@ python lp_builder.py
 
 ### Setup pertama
 
-1. Copy config brand:
+1. Copy config:
    ```powershell
    copy brand-links.example.json brand-links.json
+   copy builder-mode.example.json builder-mode.json
+   copy secrets\serp-keys.example.json secrets\serp-keys.json
    ```
-   *(Tool otomatis copy jika `brand-links.json` belum ada.)*
+   Edit `secrets/serp-keys.json` — isi SerpAPI keys (satu per elemen array). **Jangan commit file ini ke GitHub publik.**
 
 2. Tab **Utama**: isi brand, canonical, AMP, CTA, logo, banner
-3. Tab **Lanjutan**: keyword, GSC token (opsional), build
+3. Tab **Lanjutan**: keyword, build — enrich Google jalan otomatis dari `secrets/`
 4. Output: `landing/{slug}/index.html` + `amp.html`
 
 ## Struktur repo
@@ -47,6 +49,8 @@ LP Builder/
 │   ├── generic-template.html
 │   └── amp/index.html
 ├── brand-links.example.json
+├── secrets/
+│   └── serp-keys.example.json   # Salin → serp-keys.json (gitignored)
 ├── build-requirements.json
 └── assets/                # Logo GUI tool saja
 ```
@@ -57,7 +61,8 @@ LP Builder/
 |---|---|
 | `content/pack.json` | Ya |
 | `content/manifest.json` | Ya |
-| `brand-links.json` | Tidak (token/URL client) |
+| `brand-links.json` | Tidak (data brand client) |
+| `secrets/serp-keys.json` | Tidak (API key SerpAPI) |
 | `landing/` | Tidak (hasil build) |
 
 Update pack dari repo terpisah — set `remote_url` ke raw GitHub:
@@ -70,7 +75,11 @@ Atur di tab **Lanjutan → Bank Konten**, lalu **Muat Ulang Bank Konten**.
 
 ### Enrich kosa kata dari Google
 
-Isi **SerpAPI key** (PAA + related search) atau **Google CSE key + cx** di tab Bank Konten. Konten FAQ/title/deskripsi diperkaya otomatis saat generate — dipilih acak sesuai keyword. API key disimpan lokal di `brand-links.json` (tidak di-push ke GitHub).
+Key SerpAPI disimpan di **`secrets/serp-keys.json`** (bukan di GUI). Developer & client sama-sama dapat enrich jika file secrets ikut didistribusikan.
+
+- Beberapa key → rotasi otomatis
+- GUI: status read-only + toggle on/off + preview
+- Edit key hanya lewat file JSON
 
 Detail: [content/CONTENT.md](content/CONTENT.md)
 
@@ -91,20 +100,13 @@ python lp_builder.py
 
 ### Mode Developer vs Client
 
-| File | Default | Fungsi |
+| | Developer | Client |
 |---|---|---|
-| `builder-mode.json` | `client` (gitignored) | `developer` = enrich Google + field API |
-| `brand-links.json` | gitignored | Token/API key lokal |
+| Enrich Google | ✅ dari `secrets/` | ✅ dari `secrets/` (jika file ikut paket) |
+| Input API di GUI | ❌ Tidak ada | ❌ Tidak ada |
+| Edit key | `secrets/serp-keys.json` | Same (distribusi private) |
 
-Mode **Developer** (mesin Anda):
-
-```json
-{ "mode": "developer" }
-```
-
-Atau: `$env:LP_BUILD_MODE="developer"`
-
-Mode **Client** (distribusi): default — tanpa field SerpAPI, enrich Google nonaktif, secret tidak tersimpan di `configs/`.
+`builder-mode.json` hanya memengaruhi badge UI — enrich tidak lagi dimatikan di client.
 
 Push update:
 

@@ -3,11 +3,6 @@
   "global": {
     "gsc_token": "",
     "cf_token": "",
-    "favicon": "",
-    "serpapi_keys": [],
-    "serpapi_key": "",
-    "google_cse_key": "",
-    "google_cse_cx": "",
-    "serp_enrich_enabled": true
+    "favicon": ""
   }
 }
