@@ -29,6 +29,24 @@ def _cache_key(keyword: str) -> str:
     return hashlib.md5(keyword.strip().lower().encode()).hexdigest()
 
 
+def normalize_serpapi_keys(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        items = re.split(r'[\n,;]+', raw)
+    else:
+        items = []
+    keys: List[str] = []
+    seen: set = set()
+    for item in items:
+        k = str(item).strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        keys.append(k)
+    return keys
+
+
 def _load_cache(keyword: str, ttl: int) -> Optional[Dict[str, Any]]:
     path = SERP_CACHE_DIR / f'{_cache_key(keyword)}.json'
     if not path.is_file():
@@ -94,8 +112,8 @@ def fetch_serpapi(keyword: str, api_key: str) -> Dict[str, Any]:
         f'&q={quote_plus(keyword)}&hl=id&gl=id&api_key={quote_plus(api_key)}'
     )
     data = _fetch_json(url)
-    if not data:
-        return {'faq': [], 'titles': [], 'descriptions': [], 'synonyms': []}
+    if not data or data.get('error'):
+        return {'faq': [], 'titles': [], 'descriptions': [], 'synonyms': [], '_error': data.get('error') if data else 'fetch_failed'}
 
     faq: List[Dict[str, str]] = []
     for item in (data.get('related_questions') or [])[:14]:
@@ -121,6 +139,30 @@ def fetch_serpapi(keyword: str, api_key: str) -> Dict[str, Any]:
         for syn in synonyms[:6]
     ]
     return {'faq': faq, 'titles': titles, 'descriptions': descriptions, 'synonyms': synonyms}
+
+
+def fetch_serpapi_rotating(keyword: str, api_keys: List[str]) -> Dict[str, Any]:
+    keys = normalize_serpapi_keys(api_keys)
+    if not keys:
+        return {'faq': [], 'titles': [], 'descriptions': [], 'synonyms': []}
+    start = int(hashlib.md5(keyword.strip().lower().encode()).hexdigest(), 16) % len(keys)
+    ordered = keys[start:] + keys[:start]
+    last_error = ''
+    for key in ordered:
+        result = fetch_serpapi(keyword, key)
+        err = result.pop('_error', None)
+        if err:
+            last_error = str(err)
+            continue
+        if result.get('faq') or result.get('synonyms') or result.get('titles'):
+            result['_key_index'] = keys.index(key) + 1
+            return result
+        if not err:
+            return result
+    out: Dict[str, Any] = {'faq': [], 'titles': [], 'descriptions': [], 'synonyms': []}
+    if last_error:
+        out['_error'] = last_error
+    return out
 
 
 def fetch_google_cse(keyword: str, api_key: str, cx: str) -> Dict[str, Any]:
@@ -180,6 +222,7 @@ def get_serp_enrichment(
     keyword: str,
     *,
     serpapi_key: str = '',
+    serpapi_keys: Optional[List[str]] = None,
     google_cse_key: str = '',
     google_cse_cx: str = '',
     force: bool = False,
@@ -190,7 +233,8 @@ def get_serp_enrichment(
     if not primary:
         return empty
 
-    has_serp = bool((serpapi_key or '').strip())
+    keys = normalize_serpapi_keys(serpapi_keys if serpapi_keys is not None else serpapi_key)
+    has_serp = bool(keys)
     has_cse = bool((google_cse_key or '').strip() and (google_cse_cx or '').strip())
     if not has_serp and not has_cse:
         return empty
@@ -205,8 +249,11 @@ def get_serp_enrichment(
     parts: List[Dict[str, Any]] = []
     sources: List[str] = []
     if has_serp:
-        parts.append(fetch_serpapi(primary, serpapi_key.strip()))
-        sources.append('serpapi')
+        serp_result = fetch_serpapi_rotating(primary, keys)
+        serp_result.pop('_error', None)
+        serp_result.pop('_key_index', None)
+        parts.append(serp_result)
+        sources.append('serpapi' if len(keys) == 1 else f'serpapi×{len(keys)}')
     if has_cse:
         parts.append(fetch_google_cse(primary, google_cse_key.strip(), google_cse_cx.strip()))
         sources.append('google_cse')
@@ -245,6 +292,7 @@ def enrichment_to_pools(enrichment: Dict[str, Any], cat: str) -> Dict[str, List[
 
 
 def serp_configured(cfg: Dict[str, Any]) -> bool:
-    return bool((cfg.get('serpapi_key') or '').strip()) or bool(
+    keys = normalize_serpapi_keys(cfg.get('serpapi_keys') or cfg.get('serpapi_key') or '')
+    return bool(keys) or bool(
         (cfg.get('google_cse_key') or '').strip() and (cfg.get('google_cse_cx') or '').strip()
     )

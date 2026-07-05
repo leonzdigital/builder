@@ -82,7 +82,7 @@ Tab **Lanjutan → Bank Konten → Enrich dari Google**:
 
 ### Setup
 
-1. **SerpAPI**: daftar di [serpapi.com](https://serpapi.com/) → copy API key
+1. **SerpAPI**: daftar di [serpapi.com](https://serpapi.com/) — bisa **beberapa key** (satu per baris), rotasi otomatis saat quota/error
 2. **Google CSE** (alternatif/gratis terbatas):
    - [Programmable Search Engine](https://programmablesearchengine.google.com/)
    - [Custom Search JSON API](https://developers.google.com/custom-search/v1/overview) → API key + cx

@@ -68,7 +68,7 @@ from lp_compliance import (
 )
 
 from lp_build_mode import build_mode_label, is_developer_mode, ensure_build_mode_file
-from lp_content_enricher import enrichment_to_pools, get_serp_enrichment, serp_configured
+from lp_content_enricher import enrichment_to_pools, get_serp_enrichment, normalize_serpapi_keys, serp_configured
 
 AMP_TEMPLATE_DIR = AUTOLANDING_DIR / 'templates' / 'amp'
 AMP_TEMPLATE_PATH = AMP_TEMPLATE_DIR / 'index.html'
@@ -905,16 +905,19 @@ def upsert_brand_links(cfg: Dict[str, Any]) -> None:
 def get_global_config() -> Dict[str, Any]:
     data = load_brand_links()
     g = data.get('global', {})
+    serp_keys = normalize_serpapi_keys(g.get('serpapi_keys') or g.get('serpapi_key') or '')
     cfg: Dict[str, Any] = {
         'gsc_token': (g.get('gsc_token') or '').strip(),
         'cf_token': (g.get('cf_token') or '').strip(),
         'favicon': (g.get('favicon') or '').strip(),
-        'serpapi_key': (g.get('serpapi_key') or '').strip(),
+        'serpapi_keys': serp_keys,
+        'serpapi_key': serp_keys[0] if serp_keys else '',
         'google_cse_key': (g.get('google_cse_key') or '').strip(),
         'google_cse_cx': (g.get('google_cse_cx') or '').strip(),
         'serp_enrich_enabled': str(g.get('serp_enrich_enabled', True)).lower() not in ('0', 'false', 'no', ''),
     }
     if not is_developer_mode():
+        cfg['serpapi_keys'] = []
         cfg['serpapi_key'] = ''
         cfg['google_cse_key'] = ''
         cfg['google_cse_cx'] = ''
@@ -939,7 +942,7 @@ def _get_serp_pools(keyword: str, cat: str) -> Dict[str, List[Dict[str, Any]]]:
         return _serp_pool_cache[cache_key]
     enrich = get_serp_enrichment(
         keyword,
-        serpapi_key=g.get('serpapi_key', ''),
+        serpapi_keys=g.get('serpapi_keys') or [],
         google_cse_key=g.get('google_cse_key', ''),
         google_cse_cx=g.get('google_cse_cx', ''),
     )
@@ -2666,7 +2669,7 @@ def apply_cta_links(html: str, cta: str, canon: str = '', amp: str = '') -> str:
 
 CONFIG_RUNTIME_KEYS = frozenset({'template_html', '_content_meta', '_runtime_template_html'})
 SECRET_CONFIG_KEYS = frozenset({
-    'serpapi_key', 'google_cse_key', 'google_cse_cx', 'serp_enrich_enabled',
+    'serpapi_key', 'serpapi_keys', 'google_cse_key', 'google_cse_cx', 'serp_enrich_enabled',
     'gsc_token', 'cf_token',
 })
 
@@ -4433,9 +4436,12 @@ class LPWidget(ctk.CTk):
             border_color=BORDER, corner_radius=4,
         ).grid(row=8, column=0, sticky='w', padx=INSET, pady=(FIELD_GAP, 4))
 
-        _field_label(p, 9, 'SerpAPI key (disarankan — People Also Ask)')
-        self.e_serpapi = _entry(p, 'Kosongkan jika pakai Google CSE saja', show='•')
-        _field_widget(p, 10, self.e_serpapi)
+        _field_label(p, 9, 'SerpAPI keys (satu per baris — rotasi otomatis)')
+        self.txt_serpapi = ctk.CTkTextbox(
+            p, height=56, font=FT_I, fg_color=INPUT, border_color=BORDER,
+            border_width=1, text_color=TEXT, wrap='none', corner_radius=RADIUS,
+        )
+        _field_widget(p, 10, self.txt_serpapi)
 
         cse_row = ctk.CTkFrame(p, fg_color='transparent')
         cse_row.grid(row=11, column=0, sticky='ew', padx=INSET)
@@ -4509,32 +4515,41 @@ class LPWidget(ctk.CTk):
             self._log(f'Gagal simpan manifest: {exc}', 'err')
 
     def _load_serp_form_defaults(self) -> None:
-        if not is_developer_mode() or not hasattr(self, 'e_serpapi'):
+        if not is_developer_mode() or not hasattr(self, 'txt_serpapi'):
             return
         g = load_brand_links().get('global') or {}
-        self._fill_default(self.e_serpapi, g.get('serpapi_key', ''))
+        keys = normalize_serpapi_keys(g.get('serpapi_keys') or g.get('serpapi_key') or '')
+        self.txt_serpapi.delete('1.0', 'end')
+        if keys:
+            self.txt_serpapi.insert('1.0', '\n'.join(keys))
         self._fill_default(self.e_google_cse_key, g.get('google_cse_key', ''))
         self._fill_default(self.e_google_cse_cx, g.get('google_cse_cx', ''))
         enabled = g.get('serp_enrich_enabled', True)
         if hasattr(self, 'var_serp_enrich'):
             self.var_serp_enrich.set(str(enabled).lower() not in ('0', 'false', 'no', ''))
 
+    def _read_serpapi_keys_from_form(self) -> List[str]:
+        if not hasattr(self, 'txt_serpapi'):
+            return []
+        return normalize_serpapi_keys(self.txt_serpapi.get('1.0', 'end'))
+
     def _save_serp_config(self) -> None:
         if not is_developer_mode():
             self._log('Simpan API hanya tersedia di mode Developer.', 'warn')
             return
-        serpapi = self.e_serpapi.get().strip() if hasattr(self, 'e_serpapi') else ''
+        serp_keys = self._read_serpapi_keys_from_form()
         cse_key = self.e_google_cse_key.get().strip() if hasattr(self, 'e_google_cse_key') else ''
         cse_cx = self.e_google_cse_cx.get().strip() if hasattr(self, 'e_google_cse_cx') else ''
         enabled = bool(self.var_serp_enrich.get()) if hasattr(self, 'var_serp_enrich') else True
-        if not serpapi and not (cse_key and cse_cx):
-            self._log('Isi SerpAPI key atau Google CSE key + cx sebelum simpan.', 'warn')
+        if not serp_keys and not (cse_key and cse_cx):
+            self._log('Isi minimal satu SerpAPI key atau Google CSE key + cx sebelum simpan.', 'warn')
             return
         try:
             data = load_brand_links()
             if not isinstance(data.get('global'), dict):
                 data['global'] = {}
-            data['global']['serpapi_key'] = serpapi
+            data['global']['serpapi_keys'] = serp_keys
+            data['global']['serpapi_key'] = serp_keys[0] if serp_keys else ''
             data['global']['google_cse_key'] = cse_key
             data['global']['google_cse_cx'] = cse_cx
             data['global']['serp_enrich_enabled'] = enabled
@@ -4545,7 +4560,7 @@ class LPWidget(ctk.CTk):
                 encoding='utf-8',
             )
             clear_serp_pool_cache()
-            self._log('API Google/Serp disimpan ke brand-links.json (gitignored).', 'ok')
+            self._log(f'API disimpan ({len(serp_keys)} SerpAPI key · rotasi aktif).', 'ok')
         except OSError as exc:
             self._log(f'Gagal simpan API enrich: {exc}', 'err')
 
@@ -4557,10 +4572,10 @@ class LPWidget(ctk.CTk):
         if not kw:
             self._log('Isi keyword fokus dulu untuk preview enrich.', 'warn')
             return
-        serpapi = self.e_serpapi.get().strip() if hasattr(self, 'e_serpapi') else ''
+        serp_keys = self._read_serpapi_keys_from_form()
         cse_key = self.e_google_cse_key.get().strip() if hasattr(self, 'e_google_cse_key') else ''
         cse_cx = self.e_google_cse_cx.get().strip() if hasattr(self, 'e_google_cse_cx') else ''
-        if not serpapi and not (cse_key and cse_cx):
+        if not serp_keys and not (cse_key and cse_cx):
             self._log('Isi SerpAPI key atau Google CSE key + cx.', 'warn')
             return
         self._log(f'Enrich Google untuk: {kw.split(",")[0].strip()}…', 'info')
@@ -4568,7 +4583,7 @@ class LPWidget(ctk.CTk):
         def worker() -> None:
             enrich = get_serp_enrichment(
                 kw,
-                serpapi_key=serpapi,
+                serpapi_keys=serp_keys,
                 google_cse_key=cse_key,
                 google_cse_cx=cse_cx,
                 force=True,
