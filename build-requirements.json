@@ -1,0 +1,57 @@
+{
+  "title": {
+    "min": 45,
+    "max": 60,
+    "banned_words": ["slot", "gacor", "maxwin", "judi", "togel", "jackpot", "casino", "bandar", "bet", "taruhan"]
+  },
+  "description": {
+    "min": 130,
+    "max": 155
+  },
+  "faq": {
+    "min_items": 8,
+    "required_topics": [
+      "situs",
+      "login",
+      "link_alternatif",
+      "rtp",
+      "website",
+      "daftar"
+    ]
+  },
+  "reviews": {
+    "min_items": 6
+  },
+  "article": {
+    "min_paragraphs": 4,
+    "max_canonical_anchors": 1
+  },
+  "h1": {
+    "max_count": 1,
+    "must_contain_brand": true
+  },
+  "breadcrumb": {
+    "positions": [
+      "brand",
+      "login",
+      "link",
+      "situs",
+      "link_alternatif",
+      "rtp",
+      "website"
+    ]
+  },
+  "link_policy": {
+    "nav": "canonical",
+    "cta": "referral",
+    "article_anchor": "canonical"
+  },
+  "amp": {
+    "cta_count": 2,
+    "robots": "index, follow, max-image-preview:large",
+    "schema_types": ["WebPage"],
+    "no_analytics": true,
+    "promo_max_words": 20
+  },
+  "robots_desktop": "index, follow, noimageindex, max-snippet:-1, max-video-preview:-1"
+}
