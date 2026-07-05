@@ -67,6 +67,7 @@ from lp_compliance import (
     trim_title as _compliance_trim_title,
 )
 
+from lp_build_mode import build_mode_label, is_developer_mode, ensure_build_mode_file
 from lp_content_enricher import enrichment_to_pools, get_serp_enrichment, serp_configured
 
 AMP_TEMPLATE_DIR = AUTOLANDING_DIR / 'templates' / 'amp'
@@ -901,10 +902,10 @@ def upsert_brand_links(cfg: Dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
-def get_global_config() -> Dict[str, str]:
+def get_global_config() -> Dict[str, Any]:
     data = load_brand_links()
     g = data.get('global', {})
-    return {
+    cfg: Dict[str, Any] = {
         'gsc_token': (g.get('gsc_token') or '').strip(),
         'cf_token': (g.get('cf_token') or '').strip(),
         'favicon': (g.get('favicon') or '').strip(),
@@ -913,6 +914,12 @@ def get_global_config() -> Dict[str, str]:
         'google_cse_cx': (g.get('google_cse_cx') or '').strip(),
         'serp_enrich_enabled': str(g.get('serp_enrich_enabled', True)).lower() not in ('0', 'false', 'no', ''),
     }
+    if not is_developer_mode():
+        cfg['serpapi_key'] = ''
+        cfg['google_cse_key'] = ''
+        cfg['google_cse_cx'] = ''
+        cfg['serp_enrich_enabled'] = False
+    return cfg
 
 
 def clear_serp_pool_cache() -> None:
@@ -922,6 +929,8 @@ def clear_serp_pool_cache() -> None:
 
 def _get_serp_pools(keyword: str, cat: str) -> Dict[str, List[Dict[str, Any]]]:
     global _serp_pool_cache
+    if not is_developer_mode():
+        return {'faq': [], 'titles': [], 'descriptions': []}
     g = get_global_config()
     if not g.get('serp_enrich_enabled', True) or not serp_configured(g):
         return {'faq': [], 'titles': [], 'descriptions': []}
@@ -969,13 +978,6 @@ def merge_brand_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
         out.setdefault('gsc_token', global_cfg['gsc_token'])
     if global_cfg.get('cf_token'):
         out.setdefault('cf_token', global_cfg['cf_token'])
-    if global_cfg.get('serpapi_key'):
-        out.setdefault('serpapi_key', global_cfg['serpapi_key'])
-    if global_cfg.get('google_cse_key'):
-        out.setdefault('google_cse_key', global_cfg['google_cse_key'])
-    if global_cfg.get('google_cse_cx'):
-        out.setdefault('google_cse_cx', global_cfg['google_cse_cx'])
-    out.setdefault('serp_enrich_enabled', global_cfg.get('serp_enrich_enabled', True))
     out.setdefault('slug', _slugify(brand))
     out.setdefault('output_folder', default_output_folder(out['slug']))
     return out
@@ -2663,6 +2665,10 @@ def apply_cta_links(html: str, cta: str, canon: str = '', amp: str = '') -> str:
 
 
 CONFIG_RUNTIME_KEYS = frozenset({'template_html', '_content_meta', '_runtime_template_html'})
+SECRET_CONFIG_KEYS = frozenset({
+    'serpapi_key', 'google_cse_key', 'google_cse_cx', 'serp_enrich_enabled',
+    'gsc_token', 'cf_token',
+})
 
 
 def resolve_template_path(name: str) -> Optional[Path]:
@@ -2685,7 +2691,8 @@ def resolve_template_path(name: str) -> Optional[Path]:
 
 
 def slim_config_for_storage(cfg: Dict[str, Any], template_file: str = '') -> Dict[str, Any]:
-    out = {k: v for k, v in cfg.items() if k not in CONFIG_RUNTIME_KEYS}
+    blocked = CONFIG_RUNTIME_KEYS | SECRET_CONFIG_KEYS
+    out = {k: v for k, v in cfg.items() if k not in blocked}
     out.pop('template_html', None)
     tf = (template_file or cfg.get('template_file') or cfg.get('template') or '').strip()
     if tf and not tf.startswith('('):
@@ -2704,6 +2711,8 @@ def migrate_legacy_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             legacy_path.write_text(out['template_html'], encoding='utf-8')
         out['template_file'] = fname
         del out['template_html']
+    for key in SECRET_CONFIG_KEYS:
+        out.pop(key, None)
     return out
 
 
@@ -3762,6 +3771,7 @@ for _dir in (CONFIGS_DIR, LANDING_DIR, TEMPLATES_DIR, CACHE_DIR, ASSETS_DIR, CON
     _dir.mkdir(parents=True, exist_ok=True)
 
 ensure_brand_links_file()
+ensure_build_mode_file()
 
 WM_SETICON = 0x0080
 ICON_SMALL = 0
@@ -4159,7 +4169,10 @@ class LPWidget(ctk.CTk):
         status_wrap = ctk.CTkFrame(body, fg_color='transparent')
         status_wrap.grid(row=0, column=2, sticky='e', padx=(8, 16), pady=10)
         self.lbl_ready = _status_pill(status_wrap, '● Ready', GREEN)
-        self.lbl_ready.pack(side='right')
+        self.lbl_ready.pack(side='right', padx=(8, 0))
+        mode_color = ACCENT2 if is_developer_mode() else TEAL
+        self.lbl_build_mode = _status_pill(status_wrap, build_mode_label(), mode_color)
+        self.lbl_build_mode.pack(side='right')
 
         ctk.CTkFrame(top, height=1, fg_color=BORDER_SUBTLE, corner_radius=0).place(
             relx=0, rely=1.0, relwidth=1, anchor='sw',
@@ -4331,11 +4344,11 @@ class LPWidget(ctk.CTk):
         )
 
         _field_label(p, 1, 'Google Search Console')
-        self.e_gsc = _entry(p, 'Token meta tag dari GSC → Settings → Ownership verification')
+        self.e_gsc = _entry(p, 'Token meta tag dari GSC → Settings → Ownership verification', show='•')
         _field_widget(p, 2, self.e_gsc)
 
         _field_label(p, 3, 'Cloudflare Analytics')
-        self.e_cf = _entry(p, 'Token beacon dari Cloudflare → Web Analytics')
+        self.e_cf = _entry(p, 'Token beacon dari Cloudflare → Web Analytics', show='•')
         _field_widget(p, 4, self.e_cf)
 
         _field_label(p, 5, 'Favicon global')
@@ -4360,11 +4373,10 @@ class LPWidget(ctk.CTk):
         _btn(btn_row, 'Simpan Default Global', self._save_global_config, variant='secondary', height=30).pack(side='left')
 
     def _section_content_pack(self, p: Any, accent: str = BLUE) -> None:
-        _sec_label(
-            p, 0, 'Bank Konten',
-            subtitle='pack.json + enrich Google (SerpAPI / Custom Search) — lihat content/CONTENT.md',
-            accent=accent,
-        )
+        pack_sub = 'pack.json lokal atau GitHub — lihat content/CONTENT.md'
+        if is_developer_mode():
+            pack_sub = 'pack.json + enrich Google (developer) — lihat content/CONTENT.md'
+        _sec_label(p, 0, 'Bank Konten', subtitle=pack_sub, accent=accent)
 
         self.lbl_content_status = ctk.CTkLabel(
             p, text='Memuat info pack…', font=FT, text_color=SUBTITLE, anchor='w', justify='left',
@@ -4394,10 +4406,22 @@ class LPWidget(ctk.CTk):
             row=0, column=1, padx=(5, 0), sticky='ew',
         )
 
+        if is_developer_mode():
+            self._section_content_serp_dev(p)
+        else:
+            ctk.CTkLabel(
+                p,
+                text='Mode Client — enrich Google & API key disembunyikan. Pakai pack.json saja.',
+                font=FT, text_color=SUBTITLE, anchor='w', justify='left',
+            ).grid(row=6, column=0, sticky='ew', padx=INSET, pady=(FIELD_GAP, INSET))
+
+        self.after(150, self._load_content_manifest_form)
+
+    def _section_content_serp_dev(self, p: Any) -> None:
         _sep(p, 6)
         _sec_label(
-            p, 7, 'Enrich dari Google',
-            subtitle='PAA & related search → pool FAQ/title/desc acak saat build (tulis ulang, bukan copy SERP)',
+            p, 7, 'Enrich dari Google (Developer)',
+            subtitle='PAA & related search → pool FAQ/title/desc acak (tulis ulang, bukan copy SERP)',
             accent=TEAL,
         )
 
@@ -4410,7 +4434,7 @@ class LPWidget(ctk.CTk):
         ).grid(row=8, column=0, sticky='w', padx=INSET, pady=(FIELD_GAP, 4))
 
         _field_label(p, 9, 'SerpAPI key (disarankan — People Also Ask)')
-        self.e_serpapi = _entry(p, 'Kosongkan jika pakai Google CSE saja')
+        self.e_serpapi = _entry(p, 'Kosongkan jika pakai Google CSE saja', show='•')
         _field_widget(p, 10, self.e_serpapi)
 
         cse_row = ctk.CTkFrame(p, fg_color='transparent')
@@ -4422,9 +4446,9 @@ class LPWidget(ctk.CTk):
         ctk.CTkLabel(cse_row, text='Search Engine ID (cx)', font=FT, text_color=SUBTITLE).grid(
             row=0, column=1, sticky='w', padx=(8, 0),
         )
-        self.e_google_cse_key = _entry(cse_row, 'API key Custom Search')
+        self.e_google_cse_key = _entry(cse_row, 'API key Custom Search', show='•')
         self.e_google_cse_key.grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=(4, 0))
-        self.e_google_cse_cx = _entry(cse_row, 'cx dari programmablesearchengine.google.com')
+        self.e_google_cse_cx = _entry(cse_row, 'cx dari programmablesearchengine.google.com', show='•')
         self.e_google_cse_cx.grid(row=1, column=1, sticky='ew', padx=(5, 0), pady=(4, 0))
 
         serp_btn = ctk.CTkFrame(p, fg_color='transparent')
@@ -4436,8 +4460,6 @@ class LPWidget(ctk.CTk):
         _btn(serp_btn, 'Preview Enrich Keyword', self._preview_serp_enrich, variant='teal', height=30).grid(
             row=0, column=1, padx=(5, 0), sticky='ew',
         )
-
-        self.after(150, self._load_content_manifest_form)
 
     def _load_content_manifest_form(self) -> None:
         if not hasattr(self, 'e_content_remote'):
@@ -4487,7 +4509,7 @@ class LPWidget(ctk.CTk):
             self._log(f'Gagal simpan manifest: {exc}', 'err')
 
     def _load_serp_form_defaults(self) -> None:
-        if not hasattr(self, 'e_serpapi'):
+        if not is_developer_mode() or not hasattr(self, 'e_serpapi'):
             return
         g = load_brand_links().get('global') or {}
         self._fill_default(self.e_serpapi, g.get('serpapi_key', ''))
@@ -4498,6 +4520,9 @@ class LPWidget(ctk.CTk):
             self.var_serp_enrich.set(str(enabled).lower() not in ('0', 'false', 'no', ''))
 
     def _save_serp_config(self) -> None:
+        if not is_developer_mode():
+            self._log('Simpan API hanya tersedia di mode Developer.', 'warn')
+            return
         serpapi = self.e_serpapi.get().strip() if hasattr(self, 'e_serpapi') else ''
         cse_key = self.e_google_cse_key.get().strip() if hasattr(self, 'e_google_cse_key') else ''
         cse_cx = self.e_google_cse_cx.get().strip() if hasattr(self, 'e_google_cse_cx') else ''
@@ -4525,6 +4550,9 @@ class LPWidget(ctk.CTk):
             self._log(f'Gagal simpan API enrich: {exc}', 'err')
 
     def _preview_serp_enrich(self) -> None:
+        if not is_developer_mode():
+            self._log('Preview enrich hanya tersedia di mode Developer.', 'warn')
+            return
         kw = self.e_kw.get().strip() if hasattr(self, 'e_kw') else ''
         if not kw:
             self._log('Isi keyword fokus dulu untuk preview enrich.', 'warn')

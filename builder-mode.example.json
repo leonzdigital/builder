@@ -1,0 +1,4 @@
+{
+  "mode": "client",
+  "_comment": "Salin ke builder-mode.json. developer = API enrich Google. client = tanpa field secret (default aman)."
+}

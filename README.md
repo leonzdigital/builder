@@ -83,9 +83,28 @@ Clone:
 ```powershell
 git clone https://github.com/leonzdigital/builder.git
 cd builder
+copy brand-links.example.json brand-links.json
+copy builder-mode.example.json builder-mode.json
 pip install -r requirements.txt
 python lp_builder.py
 ```
+
+### Mode Developer vs Client
+
+| File | Default | Fungsi |
+|---|---|---|
+| `builder-mode.json` | `client` (gitignored) | `developer` = enrich Google + field API |
+| `brand-links.json` | gitignored | Token/API key lokal |
+
+Mode **Developer** (mesin Anda):
+
+```json
+{ "mode": "developer" }
+```
+
+Atau: `$env:LP_BUILD_MODE="developer"`
+
+Mode **Client** (distribusi): default — tanpa field SerpAPI, enrich Google nonaktif, secret tidak tersimpan di `configs/`.
 
 Push update:
 

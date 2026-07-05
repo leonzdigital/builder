@@ -9,6 +9,7 @@ venv/
 
 # Data user / client — jangan commit
 brand-links.json
+builder-mode.json
 content/content-used.json
 content/cache/
 landing/
