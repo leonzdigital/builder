@@ -72,13 +72,21 @@ Detail: [content/CONTENT.md](content/CONTENT.md)
 
 ## Deploy ke GitHub
 
+Repo: **[github.com/leonzdigital/builder](https://github.com/leonzdigital/builder)**
+
+Clone:
+
 ```powershell
-git init
-git add .
-git commit -m "Initial release: portable LP Builder"
-git branch -M main
-git remote add origin https://github.com/USERNAME/lp-builder.git
-git push -u origin main
+git clone https://github.com/leonzdigital/builder.git
+cd builder
+pip install -r requirements.txt
+python lp_builder.py
 ```
 
-**Topics disarankan:** `landing-page`, `seo`, `amp`, `python`, `customtkinter`, `google-search-console`
+Push update:
+
+```powershell
+git add .
+git commit -m "Deskripsi perubahan"
+git push
+```
